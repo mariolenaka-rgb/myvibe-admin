@@ -15,6 +15,7 @@ const COLORES = {
   gris: "#888",
   blanco: "#FFF",
   amarillo: "#FFD700",
+  naranja: "#FF8C00",
 };
 
 const s = {
@@ -44,7 +45,7 @@ const s = {
   badge: (color) => ({ backgroundColor: color + "22", border: `1px solid ${color}`, borderRadius: 6, padding: "2px 8px", color: color, fontSize: 11, fontWeight: "bold", display: "inline-block" }),
   barra: { height: 6, borderRadius: 3, backgroundColor: "#1E1E2E", overflow: "hidden", marginTop: 4 },
   barraFill: (pct, color) => ({ height: "100%", width: `${pct}%`, backgroundColor: color, borderRadius: 3 }),
-  tabs: { display: "flex", gap: 8, marginBottom: 24 },
+  tabs: { display: "flex", gap: 8, marginBottom: 24, flexWrap: "wrap" },
   tab: (activa) => ({ padding: "8px 16px", borderRadius: 8, border: `1px solid ${activa ? COLORES.morado : COLORES.borde}`, backgroundColor: activa ? COLORES.morado : COLORES.tarjeta, color: COLORES.blanco, fontWeight: "bold", fontSize: 13, cursor: "pointer" }),
   alerta: { backgroundColor: "#FF6B6B22", border: `1px solid ${COLORES.rojo}`, borderRadius: 8, padding: "10px 14px", marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" },
   alertaTexto: { color: COLORES.blanco, fontSize: 13 },
@@ -65,6 +66,8 @@ export default function MyVibeAdmin() {
   const [alertas, setAlertas] = useState([]);
   const [usuarios, setUsuarios] = useState([]);
   const [vibes, setVibes] = useState([]);
+  const [metricas, setMetricas] = useState({ totalUsuarios: 0, dau7: 0, mau30: 0, totalReacciones: 0, amistades: 0, mensajes: 0, duelos: 0 });
+  const [actividadDiaria, setActividadDiaria] = useState([]);
 
   // === LOGIN ===
   const login = async () => {
@@ -95,7 +98,7 @@ export default function MyVibeAdmin() {
   }, [sesion]);
 
   const cargarTodo = async () => {
-    await Promise.all([cargarKpis(), cargarTrending(), cargarSnapshots(), cargarUsuarios(), cargarVibes()]);
+    await Promise.all([cargarKpis(), cargarTrending(), cargarSnapshots(), cargarUsuarios(), cargarVibes(), cargarMetricas()]);
   };
 
   const cargarKpis = async () => {
@@ -123,8 +126,6 @@ export default function MyVibeAdmin() {
       return acc;
     }, {})).sort((a, b) => (b.score_trending || 0) - (a.score_trending || 0));
     setTrending(agregado);
-
-    // Generar alertas automáticas
     const nuevasAlertas = agregado.filter(t => (t.score_trending || 0) >= 3 || (t.usuarios_ultima_6h || 0) >= 5).map(t => ({
       cancion: t.cancion,
       mensaje: `🚀 "${t.cancion}" tiene score ${t.score_trending} — posible explosión inminente`,
@@ -147,6 +148,36 @@ export default function MyVibeAdmin() {
     const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
     const { data } = await supabase.from("vibes_diarios").select("*").gte("creado_en", hoy.toISOString()).order("creado_en", { ascending: false }).limit(50);
     setVibes(data || []);
+  };
+
+  const cargarMetricas = async () => {
+    const hace7 = new Date(Date.now() - 7 * 86400000).toISOString();
+    const hace30 = new Date(Date.now() - 30 * 86400000).toISOString();
+    const [
+      { count: totalUsuarios },
+      { count: dau7 },
+      { count: mau30 },
+      { count: totalReacciones },
+      { count: amistades },
+      { count: mensajes },
+      { count: duelos },
+    ] = await Promise.all([
+      supabase.from("perfiles").select("*", { count: "exact", head: true }),
+      supabase.from("vibes_diarios").select("user_id", { count: "exact", head: true }).gte("creado_en", hace7),
+      supabase.from("vibes_diarios").select("user_id", { count: "exact", head: true }).gte("creado_en", hace30),
+      supabase.from("reacciones").select("*", { count: "exact", head: true }),
+      supabase.from("solicitudes").select("*", { count: "exact", head: true }).eq("estado", "aceptada"),
+      supabase.from("mensajes_chat").select("*", { count: "exact", head: true }),
+      supabase.from("duelos").select("*", { count: "exact", head: true }),
+    ]);
+    setMetricas({ totalUsuarios: totalUsuarios||0, dau7: dau7||0, mau30: mau30||0, totalReacciones: totalReacciones||0, amistades: amistades||0, mensajes: mensajes||0, duelos: duelos||0 });
+    const { data: actividad } = await supabase.from("vibes_diarios").select("creado_en").gte("creado_en", hace30).order("creado_en", { ascending: true });
+    const porDia = {};
+    (actividad || []).forEach(v => {
+      const dia = v.creado_en.split("T")[0];
+      porDia[dia] = (porDia[dia] || 0) + 1;
+    });
+    setActividadDiaria(Object.entries(porDia).map(([dia, count]) => ({ dia, count })));
   };
 
   // === EXPORTAR CSV ===
@@ -199,6 +230,7 @@ export default function MyVibeAdmin() {
             { key: "historial", label: "📈 Historial" },
             { key: "usuarios", label: "👥 Usuarios" },
             { key: "vibes", label: "🎵 Vibes Hoy" },
+            { key: "metricas", label: "📊 Métricas" },
           ].map(t => (
             <button key={t.key} style={s.tab(tab === t.key)} onClick={() => setTab(t.key)}>{t.label}</button>
           ))}
@@ -206,7 +238,6 @@ export default function MyVibeAdmin() {
 
         {/* ══ DASHBOARD ══ */}
         {tab === "dashboard" && (<>
-          {/* KPIs */}
           <div style={s.grid}>
             {[
               { label: "Usuarios registrados", valor: kpis.usuarios, icono: "👥" },
@@ -221,8 +252,6 @@ export default function MyVibeAdmin() {
               </div>
             ))}
           </div>
-
-          {/* Alertas */}
           {alertas.length > 0 && (
             <div style={s.seccion}>
               <div style={s.seccionTitulo}>⚠️ Alertas automáticas</div>
@@ -236,8 +265,6 @@ export default function MyVibeAdmin() {
               ))}
             </div>
           )}
-
-          {/* Top 5 Trending */}
           <div style={s.seccion}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
               <div style={s.seccionTitulo}>🔥 Top Trending ahora</div>
@@ -325,14 +352,14 @@ export default function MyVibeAdmin() {
                 </tr>
               </thead>
               <tbody>
-                {snapshots.map(s => (
-                  <tr key={s.id}>
-                    <td style={{ ...s, color: COLORES.gris, fontSize: 12 }}>{s.fecha}</td>
-                    <td style={{ ...s, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.cancion}</td>
-                    <td style={s}>{s.total_usuarios}</td>
-                    <td style={{ ...s, color: COLORES.verde }}>+{s.usuarios_ultima_6h}</td>
-                    <td style={{ ...s, color: COLORES.amarillo }}>×{s.velocidad_crecimiento}</td>
-                    <td style={{ ...s, color: COLORES.morado, fontWeight: "bold" }}>{s.score_trending}</td>
+                {snapshots.map(snap => (
+                  <tr key={snap.id}>
+                    <td style={{ ...s.td, color: COLORES.gris, fontSize: 12 }}>{snap.fecha}</td>
+                    <td style={{ ...s.td, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{snap.cancion}</td>
+                    <td style={s.td}>{snap.total_usuarios}</td>
+                    <td style={{ ...s.td, color: COLORES.verde }}>+{snap.usuarios_ultima_6h}</td>
+                    <td style={{ ...s.td, color: COLORES.amarillo }}>×{snap.velocidad_crecimiento}</td>
+                    <td style={{ ...s.td, color: COLORES.morado, fontWeight: "bold" }}>{snap.score_trending}</td>
                   </tr>
                 ))}
               </tbody>
@@ -399,6 +426,81 @@ export default function MyVibeAdmin() {
             </table>
           </div>
         )}
+
+        {/* ══ MÉTRICAS ══ */}
+        {tab === "metricas" && (<>
+          <div style={s.grid}>
+            {[
+              { label: "Total usuarios registrados", valor: metricas.totalUsuarios, icono: "👥", color: COLORES.morado },
+              { label: "Usuarios activos 7 días", valor: metricas.dau7, icono: "📅", color: COLORES.verde },
+              { label: "Usuarios activos 30 días (MAU)", valor: metricas.mau30, icono: "📆", color: COLORES.amarillo },
+              { label: "Ratio actividad DAU/MAU", valor: metricas.mau30 > 0 ? Math.round((metricas.dau7 / metricas.mau30) * 100) + "%" : "—", icono: "📈", color: COLORES.rojo },
+              { label: "Total reacciones", valor: metricas.totalReacciones, icono: "🔥", color: COLORES.naranja },
+              { label: "Amistades formadas", valor: metricas.amistades, icono: "🤝", color: COLORES.verde },
+              { label: "Mensajes enviados", valor: metricas.mensajes, icono: "💬", color: COLORES.morado },
+              { label: "Duelos lanzados", valor: metricas.duelos, icono: "⚔️", color: COLORES.amarillo },
+            ].map(k => (
+              <div key={k.label} style={s.kpi}>
+                <div style={{ fontSize: 24, marginBottom: 8 }}>{k.icono}</div>
+                <div style={{ ...s.kpiValor, color: k.color }}>{k.valor}</div>
+                <div style={s.kpiLabel}>{k.label}</div>
+              </div>
+            ))}
+          </div>
+
+          <div style={s.seccion}>
+            <div style={s.seccionTitulo}>📅 Actividad diaria — últimos 30 días</div>
+            {actividadDiaria.length === 0 && <div style={{ color: COLORES.gris, fontSize: 13 }}>Sin datos</div>}
+            {actividadDiaria.map(({ dia, count }) => {
+              const maxCount = Math.max(...actividadDiaria.map(d => d.count), 1);
+              const pct = Math.round((count / maxCount) * 100);
+              return (
+                <div key={dia} style={{ marginBottom: 10 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                    <span style={{ color: COLORES.gris, fontSize: 12 }}>{dia}</span>
+                    <span style={{ color: COLORES.morado, fontSize: 12, fontWeight: "bold" }}>{count} vibes</span>
+                  </div>
+                  <div style={s.barra}>
+                    <div style={s.barraFill(pct, COLORES.morado)} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div style={s.seccion}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <div style={s.seccionTitulo}>📋 Resumen para inversores</div>
+              <button style={s.btnSm} onClick={() => exportarCSV([{
+                total_usuarios: metricas.totalUsuarios,
+                usuarios_activos_7d: metricas.dau7,
+                usuarios_activos_30d_MAU: metricas.mau30,
+                ratio_actividad_pct: metricas.mau30 > 0 ? Math.round((metricas.dau7 / metricas.mau30) * 100) : 0,
+                total_reacciones: metricas.totalReacciones,
+                amistades: metricas.amistades,
+                mensajes: metricas.mensajes,
+                duelos: metricas.duelos,
+                fecha: new Date().toISOString().split("T")[0],
+              }], "metricas_inversores")}>⬇️ Exportar CSV</button>
+            </div>
+            {[
+              { label: "Usuarios totales registrados", valor: metricas.totalUsuarios },
+              { label: "Usuarios activos últimos 7 días", valor: metricas.dau7 },
+              { label: "Usuarios activos últimos 30 días (MAU)", valor: metricas.mau30 },
+              { label: "Tasa de actividad DAU/MAU", valor: metricas.mau30 > 0 ? Math.round((metricas.dau7 / metricas.mau30) * 100) + "%" : "—" },
+              { label: "Total interacciones (reacciones)", valor: metricas.totalReacciones },
+              { label: "Conexiones sociales (amistades)", valor: metricas.amistades },
+              { label: "Mensajes intercambiados", valor: metricas.mensajes },
+              { label: "Duelos de Vibe lanzados", valor: metricas.duelos },
+            ].map(({ label, valor }) => (
+              <div key={label} style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", borderBottom: `1px solid ${COLORES.borde}` }}>
+                <span style={{ color: COLORES.gris, fontSize: 13 }}>{label}</span>
+                <span style={{ color: COLORES.blanco, fontWeight: "bold", fontSize: 13 }}>{valor}</span>
+              </div>
+            ))}
+          </div>
+        </>)}
+
       </div>
     </div>
   );
