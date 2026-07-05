@@ -68,6 +68,7 @@ export default function MyVibeAdmin() {
   const [vibes, setVibes] = useState([]);
   const [metricas, setMetricas] = useState({ totalUsuarios: 0, dau7: 0, mau30: 0, totalReacciones: 0, amistades: 0, mensajes: 0, duelos: 0 });
   const [actividadDiaria, setActividadDiaria] = useState([]);
+  const [opiniones, setOpiniones] = useState([]);
 
   // === LOGIN ===
   const login = async () => {
@@ -98,7 +99,7 @@ export default function MyVibeAdmin() {
   }, [sesion]);
 
   const cargarTodo = async () => {
-    await Promise.all([cargarKpis(), cargarTrending(), cargarSnapshots(), cargarUsuarios(), cargarVibes(), cargarMetricas()]);
+    await Promise.all([cargarKpis(), cargarTrending(), cargarSnapshots(), cargarUsuarios(), cargarVibes(), cargarMetricas(), cargarOpiniones()]);
   };
 
   const cargarKpis = async () => {
@@ -180,6 +181,11 @@ export default function MyVibeAdmin() {
     setActividadDiaria(Object.entries(porDia).map(([dia, count]) => ({ dia, count })));
   };
 
+  const cargarOpiniones = async () => {
+    const { data } = await supabase.from("opiniones_web").select("id, nick, valoracion, texto, creado_en").order("creado_en", { ascending: false }).limit(100);
+    setOpiniones(data || []);
+  };
+
   // === EXPORTAR CSV ===
   const exportarCSV = (datos, nombre) => {
     if (!datos.length) return;
@@ -231,6 +237,7 @@ export default function MyVibeAdmin() {
             { key: "usuarios", label: "👥 Usuarios" },
             { key: "vibes", label: "🎵 Vibes Hoy" },
             { key: "metricas", label: "📊 Métricas" },
+            { key: "opiniones", label: "💬 Opiniones" },
           ].map(t => (
             <button key={t.key} style={s.tab(tab === t.key)} onClick={() => setTab(t.key)}>{t.label}</button>
           ))}
@@ -500,6 +507,43 @@ export default function MyVibeAdmin() {
             ))}
           </div>
         </>)}
+
+        {/* ══ OPINIONES ══ */}
+        {tab === "opiniones" && (
+          <div style={s.seccion}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <div style={s.seccionTitulo}>💬 Opiniones de usuarios</div>
+              <button style={s.btnSm} onClick={() => exportarCSV(opiniones, "opiniones_web")}>⬇️ Exportar CSV</button>
+            </div>
+            <table style={s.tabla}>
+              <thead>
+                <tr>
+                  <th style={s.th}>Fecha</th>
+                  <th style={s.th}>Nick</th>
+                  <th style={s.th}>Valoración</th>
+                  <th style={s.th}>Opinión</th>
+                </tr>
+              </thead>
+              <tbody>
+                {opiniones.map(o => (
+                  <tr key={o.id}>
+                    <td style={{ ...s.td, color: COLORES.gris, fontSize: 12 }}>{new Date(o.creado_en).toLocaleString("es-ES", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}</td>
+                    <td style={s.td}>{o.nick || "—"}</td>
+                    <td style={s.td}>
+                      <span style={s.badge((o.valoracion || 0) >= 4 ? COLORES.verde : (o.valoracion || 0) >= 3 ? COLORES.amarillo : COLORES.rojo)}>
+                        {"★".repeat(o.valoracion || 0)}{"☆".repeat(Math.max(5 - (o.valoracion || 0), 0))}
+                      </span>
+                    </td>
+                    <td style={{ ...s.td, maxWidth: 400, whiteSpace: "pre-wrap" }}>{o.texto}</td>
+                  </tr>
+                ))}
+                {opiniones.length === 0 && (
+                  <tr><td style={{ ...s.td, color: COLORES.gris }} colSpan={4}>Sin opiniones todavía</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
 
       </div>
     </div>
