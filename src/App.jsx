@@ -106,15 +106,12 @@ export default function MyVibeAdmin() {
     await Promise.all([cargarKpis(), cargarTrending(), cargarSnapshots(), cargarUsuarios(), cargarVibes(), cargarMetricas(), cargarOpiniones(), cargarDenuncias()]);
   };
 
+  // Los recuentos van por una funcion solo-admin del servidor: con las politicas de
+  // seguridad, leer las tablas directamente solo devolveria las filas propias.
   const cargarKpis = async () => {
-    const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
-    const [{ count: usuarios }, { count: vibesHoy }, { count: clanes }, { count: capsulas }] = await Promise.all([
-      supabase.from("perfiles").select("*", { count: "exact", head: true }),
-      supabase.from("vibes_diarios").select("*", { count: "exact", head: true }).gte("creado_en", hoy.toISOString()),
-      supabase.from("clanes").select("*", { count: "exact", head: true }),
-      supabase.from("capsulas").select("*", { count: "exact", head: true }).gt("caduca_en", new Date().toISOString()),
-    ]);
-    setKpis({ usuarios: usuarios || 0, vibesHoy: vibesHoy || 0, clanes: clanes || 0, capsulas: capsulas || 0 });
+    const { data: r } = await supabase.rpc("admin_resumen");
+    if (!r) return;
+    setKpis({ usuarios: r.usuarios, vibesHoy: r.vibes_hoy, clanes: r.clanes, capsulas: r.capsulas });
   };
 
   const cargarTrending = async () => {
@@ -145,7 +142,7 @@ export default function MyVibeAdmin() {
   };
 
   const cargarUsuarios = async () => {
-    const { data } = await supabase.from("perfiles").select("*").order("puntos", { ascending: false }).limit(50);
+    const { data } = await supabase.rpc("admin_usuarios");
     setUsuarios(data || []);
   };
 
@@ -156,26 +153,9 @@ export default function MyVibeAdmin() {
   };
 
   const cargarMetricas = async () => {
-    const hace7 = new Date(Date.now() - 7 * 86400000).toISOString();
     const hace30 = new Date(Date.now() - 30 * 86400000).toISOString();
-    const [
-      { count: totalUsuarios },
-      { count: dau7 },
-      { count: mau30 },
-      { count: totalReacciones },
-      { count: amistades },
-      { count: mensajes },
-      { count: duelos },
-    ] = await Promise.all([
-      supabase.from("perfiles").select("*", { count: "exact", head: true }),
-      supabase.from("vibes_diarios").select("user_id", { count: "exact", head: true }).gte("creado_en", hace7),
-      supabase.from("vibes_diarios").select("user_id", { count: "exact", head: true }).gte("creado_en", hace30),
-      supabase.from("reacciones").select("*", { count: "exact", head: true }),
-      supabase.from("solicitudes").select("*", { count: "exact", head: true }).eq("estado", "aceptada"),
-      supabase.from("mensajes_chat").select("*", { count: "exact", head: true }),
-      supabase.from("duelos").select("*", { count: "exact", head: true }),
-    ]);
-    setMetricas({ totalUsuarios: totalUsuarios||0, dau7: dau7||0, mau30: mau30||0, totalReacciones: totalReacciones||0, amistades: amistades||0, mensajes: mensajes||0, duelos: duelos||0 });
+    const { data: r } = await supabase.rpc("admin_resumen");
+    if (r) setMetricas({ totalUsuarios: r.usuarios, dau7: r.activos_7d, mau30: r.activos_30d, totalReacciones: r.reacciones, amistades: r.amistades, mensajes: r.mensajes, duelos: r.duelos });
     const { data: actividad } = await supabase.from("vibes_diarios").select("creado_en").gte("creado_en", hace30).order("creado_en", { ascending: true });
     const porDia = {};
     (actividad || []).forEach(v => {
@@ -423,7 +403,7 @@ export default function MyVibeAdmin() {
                   <tr key={u.user_id}>
                     <td style={s.td}>{u.nick || "—"}</td>
                     <td style={{ ...s.td, color: COLORES.amarillo }}>{u.puntos || 0}</td>
-                    <td style={s.td}>{u.es_admin ? <span style={s.badge(COLORES.morado)}>Admin</span> : "—"}</td>
+                    <td style={s.td}>{u.es_admin ? <span style={s.badge(COLORES.morado)}>Admin</span> : u.suspendido ? <span style={s.badge(COLORES.rojo)}>Suspendido</span> : "—"}</td>
                     <td style={{ ...s.td, color: COLORES.gris, fontSize: 11 }}>{u.user_id}</td>
                   </tr>
                 ))}
