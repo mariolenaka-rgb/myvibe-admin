@@ -69,6 +69,10 @@ export default function MyVibeAdmin() {
   const [metricas, setMetricas] = useState({ totalUsuarios: 0, dau7: 0, mau30: 0, totalReacciones: 0, amistades: 0, mensajes: 0, duelos: 0 });
   const [actividadDiaria, setActividadDiaria] = useState([]);
   const [opiniones, setOpiniones] = useState([]);
+  const [denuncias, setDenuncias] = useState([]);
+  const [filtroDenuncias, setFiltroDenuncias] = useState("pendiente");
+  const [denunciasPendientes, setDenunciasPendientes] = useState(0);
+  const [errorDenuncias, setErrorDenuncias] = useState("");
 
   // === LOGIN ===
   const login = async () => {
@@ -99,7 +103,7 @@ export default function MyVibeAdmin() {
   }, [sesion]);
 
   const cargarTodo = async () => {
-    await Promise.all([cargarKpis(), cargarTrending(), cargarSnapshots(), cargarUsuarios(), cargarVibes(), cargarMetricas(), cargarOpiniones()]);
+    await Promise.all([cargarKpis(), cargarTrending(), cargarSnapshots(), cargarUsuarios(), cargarVibes(), cargarMetricas(), cargarOpiniones(), cargarDenuncias()]);
   };
 
   const cargarKpis = async () => {
@@ -186,6 +190,29 @@ export default function MyVibeAdmin() {
     setOpiniones(data || []);
   };
 
+  // === DENUNCIAS — las Normas de la comunidad prometen revisarlas en 24 h ===
+  const cargarDenuncias = async (estado = filtroDenuncias) => {
+    setErrorDenuncias("");
+    const [{ data, error }, { data: pendientes }] = await Promise.all([
+      supabase.rpc("admin_reportes", { p_estado: estado === "todas" ? null : estado }),
+      supabase.rpc("admin_reportes", { p_estado: "pendiente" }),
+    ]);
+    if (error) { setErrorDenuncias(`No se pudieron cargar las denuncias: ${error.message}`); return; }
+    setDenuncias(data || []);
+    setDenunciasPendientes((pendientes || []).length);
+  };
+
+  const resolverDenuncia = async (d, accion) => {
+    const avisos = {
+      borrar_contenido: "¿Borrar el contenido denunciado? No se puede deshacer.",
+      suspender: `¿Borrar el contenido y SUSPENDER la cuenta de ${d.reportado_nick || "este usuario"}? No podrá volver a entrar con esa cuenta.`,
+    };
+    if (avisos[accion] && !window.confirm(avisos[accion])) return;
+    const { error } = await supabase.rpc("admin_resolver_reporte", { p_reporte_id: d.id, p_accion: accion });
+    if (error) { window.alert(`No se pudo completar: ${error.message}`); return; }
+    cargarDenuncias();
+  };
+
   // === EXPORTAR CSV ===
   const exportarCSV = (datos, nombre) => {
     if (!datos.length) return;
@@ -238,6 +265,7 @@ export default function MyVibeAdmin() {
             { key: "vibes", label: "🎵 Vibes Hoy" },
             { key: "metricas", label: "📊 Métricas" },
             { key: "opiniones", label: "💬 Opiniones" },
+            { key: "denuncias", label: `🚩 Denuncias${denunciasPendientes ? ` (${denunciasPendientes})` : ""}` },
           ].map(t => (
             <button key={t.key} style={s.tab(tab === t.key)} onClick={() => setTab(t.key)}>{t.label}</button>
           ))}
@@ -539,6 +567,83 @@ export default function MyVibeAdmin() {
                 ))}
                 {opiniones.length === 0 && (
                   <tr><td style={{ ...s.td, color: COLORES.gris }} colSpan={4}>Sin opiniones todavía</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* ══ DENUNCIAS ══ */}
+        {tab === "denuncias" && (
+          <div style={s.seccion}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 8 }}>
+              <div style={{ ...s.seccionTitulo, marginBottom: 0 }}>🚩 Denuncias</div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {[
+                  { key: "pendiente", label: "Pendientes" },
+                  { key: "todas", label: "Todas" },
+                  { key: "descartada", label: "Descartadas" },
+                  { key: "contenido_borrado", label: "Contenido borrado" },
+                  { key: "usuario_suspendido", label: "Suspendidos" },
+                ].map(f => (
+                  <button key={f.key} style={s.tab(filtroDenuncias === f.key)} onClick={() => { setFiltroDenuncias(f.key); cargarDenuncias(f.key); }}>{f.label}</button>
+                ))}
+              </div>
+            </div>
+            <div style={{ color: COLORES.gris, fontSize: 12, marginBottom: 16 }}>
+              Compromiso de las Normas de la comunidad: revisar cada denuncia en menos de 24 horas.
+            </div>
+            {errorDenuncias && <div style={{ ...s.error, textAlign: "left", marginBottom: 12 }}>{errorDenuncias}</div>}
+            <table style={s.tabla}>
+              <thead>
+                <tr>
+                  <th style={s.th}>Fecha</th>
+                  <th style={s.th}>Tipo</th>
+                  <th style={s.th}>Contenido</th>
+                  <th style={s.th}>Motivo</th>
+                  <th style={s.th}>Denunciado</th>
+                  <th style={s.th}>Denuncia</th>
+                  <th style={s.th}>Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {denuncias.map(d => {
+                  const horas = (Date.now() - new Date(d.creado_en).getTime()) / 3600000;
+                  const pendiente = d.estado === "pendiente";
+                  const colorEstado = { pendiente: horas > 24 ? COLORES.rojo : COLORES.amarillo, descartada: COLORES.gris, contenido_borrado: COLORES.naranja, usuario_suspendido: COLORES.rojo }[d.estado] || COLORES.gris;
+                  return (
+                    <tr key={d.id}>
+                      <td style={{ ...s.td, color: COLORES.gris, fontSize: 12, whiteSpace: "nowrap" }}>
+                        {new Date(d.creado_en).toLocaleString("es-ES", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                        <div><span style={s.badge(colorEstado)}>{pendiente ? `hace ${Math.floor(horas)} h` : d.estado.replace("_", " ")}</span></div>
+                      </td>
+                      <td style={s.td}>{{ vibe: "Vibe", post_tribu: "Post de tribu", usuario: "Usuario" }[d.tipo] || d.tipo}</td>
+                      <td style={{ ...s.td, maxWidth: 320, whiteSpace: "pre-wrap" }}>{d.contenido_texto || "—"}</td>
+                      <td style={{ ...s.td, maxWidth: 220, whiteSpace: "pre-wrap", color: COLORES.gris }}>{d.motivo || "—"}</td>
+                      <td style={s.td}>
+                        {d.reportado_nick || "—"}
+                        {d.denuncias_al_reportado > 1 && <div style={{ color: COLORES.rojo, fontSize: 11 }}>{d.denuncias_al_reportado} denuncias en total</div>}
+                        {d.reportado_suspendido && <div><span style={s.badge(COLORES.rojo)}>suspendido</span></div>}
+                      </td>
+                      <td style={{ ...s.td, color: COLORES.gris, fontSize: 12 }}>por {d.reportador_nick || "—"}</td>
+                      <td style={s.td}>
+                        {pendiente ? (
+                          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                            <button style={s.btnGris} onClick={() => resolverDenuncia(d, "descartar")}>Descartar</button>
+                            {(d.tipo === "vibe" || d.tipo === "post_tribu") && d.contenido_id && (
+                              <button style={{ ...s.btnSm, backgroundColor: COLORES.naranja }} onClick={() => resolverDenuncia(d, "borrar_contenido")}>Borrar contenido</button>
+                            )}
+                            {d.reportado_id && !d.reportado_suspendido && (
+                              <button style={s.btnRojo} onClick={() => resolverDenuncia(d, "suspender")}>Borrar y suspender</button>
+                            )}
+                          </div>
+                        ) : <span style={{ color: COLORES.gris, fontSize: 12 }}>Resuelta</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
+                {denuncias.length === 0 && !errorDenuncias && (
+                  <tr><td style={{ ...s.td, color: COLORES.gris }} colSpan={7}>No hay denuncias en esta lista</td></tr>
                 )}
               </tbody>
             </table>
